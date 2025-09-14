@@ -1,6 +1,8 @@
-import React, { useState } from "react";
+// FinancePage.tsx
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useEffect, useState } from "react";
 import {
-  Button,
+  Alert,
   FlatList,
   ScrollView,
   StyleSheet,
@@ -11,7 +13,7 @@ import {
 } from "react-native";
 
 interface Transaction {
-  id: number;
+  id: string;
   desc: string;
   amount: number;
   type: "income" | "expense";
@@ -19,7 +21,9 @@ interface Transaction {
   date: string;
 }
 
-function Home() {
+const API_URL = "http://127.0.0.1:5000"; // <-- Replace with your PC LAN IP
+
+export default function FinancePage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [form, setForm] = useState({
     desc: "",
@@ -28,233 +32,290 @@ function Home() {
     category: "",
     date: "",
   });
-  const [summary, setSummary] = useState<null | {
-    income: number;
-    expense: number;
-    categories: { [key: string]: number };
-    period: string;
-  }>(null);
-  const [idCounter, setIdCounter] = useState(1);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState("all");
+  const [summary, setSummary] = useState({ income: 0, expense: 0 });
+  const [authToken, setAuthToken] = useState<string | null>(null);
 
-  const handleChange = (name: string, value: string) => {
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
+  const [chatMessages, setChatMessages] = useState<
+    { role: "user" | "ai"; text: string }[]
+  >([]);
+  const [chatInput, setChatInput] = useState("");
 
-  const addTransaction = () => {
-    if (!form.desc || !form.amount || !form.category || !form.date) return;
-
-    const newTx: Transaction = {
-      id: idCounter,
-      desc: form.desc,
-      amount: parseFloat(form.amount),
-      type: form.type as "income" | "expense",
-      category: form.category,
-      date: form.date,
-    };
-
-    setTransactions((txs) => [...txs, newTx]);
-    setIdCounter((c) => c + 1);
-    setForm({ desc: "", amount: "", type: "income", category: "", date: "" });
-    setSummary(null);
-  };
-
-  const deleteTransaction = (id: number) => {
-    setTransactions((txs) => txs.filter((tx) => tx.id !== id));
-    setSummary(null);
-  };
-
-  const getBalance = () => {
-    return transactions.reduce((acc, tx) => {
-      return tx.type === "income" ? acc + tx.amount : acc - tx.amount;
-    }, 0);
-  };
-
-  const getSummary = (period: string) => {
-    const now = new Date();
-    const filtered = transactions.filter((tx) => {
-      const txDate = new Date(tx.date);
-      if (period === "weekly") {
-        const diffDays = (now.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24);
-        return diffDays <= 7 && diffDays >= 0;
-      } else if (period === "monthly") {
-        return (
-          txDate.getFullYear() === now.getFullYear() &&
-          txDate.getMonth() === now.getMonth()
-        );
+  useEffect(() => {
+    const loadToken = async () => {
+      const token = await AsyncStorage.getItem("auth_token");
+      if (!token) {
+        Alert.alert("Error", "No auth token. Please login.");
+        return;
       }
-      return false;
-    });
+      setAuthToken(token);
+      fetchTransactions(token);
+    };
+    loadToken();
+  }, []);
 
-    const income = filtered
-      .filter((tx) => tx.type === "income")
-      .reduce((sum, tx) => sum + tx.amount, 0);
-    const expense = filtered
-      .filter((tx) => tx.type === "expense")
-      .reduce((sum, tx) => sum + tx.amount, 0);
+  const normalizeTx = (t: any): Transaction => ({
+    id: t.id,
+    desc: t.description,
+    amount: t.amount,
+    type: t.type,
+    category: t.category,
+    date: t.date,
+  });
 
-    const categories: { [key: string]: number } = {};
-    filtered
-      .filter((tx) => tx.type === "expense")
-      .forEach((tx) => {
-        categories[tx.category] = (categories[tx.category] || 0) + tx.amount;
+  const fetchTransactions = async (token: string) => {
+    try {
+      const res = await fetch(`${API_URL}/transactions`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-    setSummary({ income, expense, categories, period });
+      const data = await res.json();
+      if (res.ok) {
+        const normalized = (data.transactions || []).map(normalizeTx);
+        setTransactions(normalized);
+        calculateSummary(normalized);
+      } else {
+        console.error(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const filteredTransactions = transactions.filter((tx) => {
-    const matchesSearch = tx.desc.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = filterType === "all" || tx.type === filterType;
-    return matchesSearch && matchesType;
-  });
+  const calculateSummary = (txs: Transaction[]) => {
+    const income = txs
+      .filter((t) => t.type === "income")
+      .reduce((sum, t) => sum + t.amount, 0);
+    const expense = txs
+      .filter((t) => t.type === "expense")
+      .reduce((sum, t) => sum + t.amount, 0);
+    setSummary({ income, expense });
+  };
+
+  const addTransaction = async () => {
+    if (!form.desc || !form.amount || !form.category || !form.date) {
+      Alert.alert("Error", "Please fill all fields.");
+      return;
+    }
+    if (!authToken) {
+      Alert.alert("Error", "No auth token. Please login.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/transaction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          description: form.desc,
+          amount: parseFloat(form.amount),
+          type: form.type,
+          category: form.category,
+          date: form.date,
+        }),
+      });
+      const data: { transaction?: any; error?: string } = await res.json();
+      if (res.ok && data.transaction) {
+        const newTx = normalizeTx(data.transaction);
+        const updated = [...transactions, newTx];
+        setTransactions(updated);
+        calculateSummary(updated);
+        setForm({ desc: "", amount: "", type: "income", category: "", date: "" });
+      } else {
+        Alert.alert("Error", data.error || "Failed to add transaction");
+      }
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", "Network or server error");
+    }
+  };
+
+  const deleteTransaction = async (id: string) => {
+    if (!authToken) return;
+    try {
+      const res = await fetch(`${API_URL}/transaction?transaction_id=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data: { success?: boolean; error?: string } = await res.json();
+      if (res.ok && data.success) {
+        const updated = transactions.filter((t) => t.id !== id);
+        setTransactions(updated);
+        calculateSummary(updated);
+      } else {
+        Alert.alert("Error", data.error || "Failed to delete transaction");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const sendChatMessage = async () => {
+    if (!chatInput.trim()) return;
+    if (!authToken) {
+      Alert.alert("Error", "No auth token. Please login.");
+      return;
+    }
+
+    const userMsg = { role: "user" as const, text: chatInput };
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput("");
+
+    try {
+      const res = await fetch(`${API_URL}/ai_chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ message: userMsg.text }),
+      });
+      const data: { response?: string; error?: string } = await res.json();
+      const aiMsg = {
+        role: "ai" as const,
+        text: res.ok && data.response ? data.response : (data.error || "AI Error"),
+      };
+      setChatMessages((prev) => [...prev, aiMsg]);
+    } catch (err) {
+      console.error(err);
+      setChatMessages((prev) => [...prev, { role: "ai", text: "Network error" }]);
+    }
+  };
 
   return (
     <ScrollView style={styles.container}>
-      <Text style={styles.heading}>Personal Finance Tracker</Text>
+      <Text style={styles.heading}>Finance Tracker</Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Description"
-        value={form.desc}
-        onChangeText={(val) => handleChange("desc", val)}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Amount"
-        value={form.amount}
-        keyboardType="numeric"
-        onChangeText={(val) => handleChange("amount", val)}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Type (income or expense)"
-        value={form.type}
-        onChangeText={(val) => handleChange("type", val)}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Category"
-        value={form.category}
-        onChangeText={(val) => handleChange("category", val)}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Date (YYYY-MM-DD)"
-        value={form.date}
-        onChangeText={(val) => handleChange("date", val)}
-      />
-      <Button title="Add Transaction" onPress={addTransaction} />
-
-      <Text style={styles.balance}>Balance: ${getBalance().toFixed(2)}</Text>
-
-      <View style={styles.buttonRow}>
-        <Button title="Weekly Summary" onPress={() => getSummary("weekly")} />
-        <Button title="Monthly Summary" onPress={() => getSummary("monthly")} />
+      {/* Form */}
+      <View style={styles.form}>
+        <TextInput
+          placeholder="Description"
+          value={form.desc}
+          onChangeText={(val) => setForm({ ...form, desc: val })}
+          style={styles.input}
+        />
+        <TextInput
+          placeholder="Amount"
+          value={form.amount}
+          keyboardType="numeric"
+          onChangeText={(val) => setForm({ ...form, amount: val })}
+          style={styles.input}
+        />
+        <TextInput
+          placeholder="Category"
+          value={form.category}
+          onChangeText={(val) => setForm({ ...form, category: val })}
+          style={styles.input}
+        />
+        <TextInput
+          placeholder="Date (YYYY-MM-DD)"
+          value={form.date}
+          onChangeText={(val) => setForm({ ...form, date: val })}
+          style={styles.input}
+        />
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.typeBtn, form.type === "income" && styles.activeType]}
+            onPress={() => setForm({ ...form, type: "income" })}
+          >
+            <Text>Income</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.typeBtn, form.type === "expense" && styles.activeType]}
+            onPress={() => setForm({ ...form, type: "expense" })}
+          >
+            <Text>Expense</Text>
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity style={styles.button} onPress={addTransaction}>
+          <Text style={styles.buttonText}>Add Transaction</Text>
+        </TouchableOpacity>
       </View>
 
-      {summary && (
-        <View style={styles.summaryBox}>
-          <Text style={styles.summaryTitle}>
-            {summary.period.charAt(0).toUpperCase() + summary.period.slice(1)} Summary
-          </Text>
-          <Text>Income: ${summary.income.toFixed(2)}</Text>
-          <Text>Expenses: ${summary.expense.toFixed(2)}</Text>
-          <Text>Expenses by Category:</Text>
-          {Object.entries(summary.categories).map(([cat, amt]) => (
-            <Text key={cat}>
-              {cat}: ${amt.toFixed(2)}
-            </Text>
-          ))}
-        </View>
-      )}
+      {/* Summary */}
+      <View style={styles.summary}>
+        <Text style={styles.summaryText}>Income: ${summary.income}</Text>
+        <Text style={styles.summaryText}>Expense: ${summary.expense}</Text>
+        <Text style={styles.summaryText}>Balance: ${summary.income - summary.expense}</Text>
+      </View>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Search description..."
-        value={searchTerm}
-        onChangeText={setSearchTerm}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Filter (all, income, expense)"
-        value={filterType}
-        onChangeText={setFilterType}
-      />
-
+      {/* Transactions */}
       <FlatList
-        data={filteredTransactions}
-        keyExtractor={(item) => item.id.toString()}
+        data={transactions}
+        keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
-          <View style={styles.transactionRow}>
-            <Text>
-              {item.desc} - ${item.amount.toFixed(2)} - {item.type} -{" "}
-              {item.category} - {item.date}
-            </Text>
-            <TouchableOpacity onPress={() => deleteTransaction(item.id)}>
-              <Text style={styles.deleteText}>Delete</Text>
-            </TouchableOpacity>
+          <View style={styles.txRow}>
+            <View>
+              <Text style={styles.txDesc}>{item.desc}</Text>
+              <Text style={styles.txMeta}>
+                {item.category} • {item.date}
+              </Text>
+            </View>
+            <View style={{ alignItems: "flex-end" }}>
+              <Text style={item.type === "income" ? styles.income : styles.expense}>
+                {item.type === "income" ? "+" : "-"}${item.amount}
+              </Text>
+              <TouchableOpacity onPress={() => deleteTransaction(item.id)}>
+                <Text style={styles.delete}>Delete</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       />
+      <View style={styles.chatContainer}>
+        <Text style={styles.chatHeading}> AI Finance Assistant</Text>
+        <FlatList
+          data={chatMessages}
+          keyExtractor={(_, i) => i.toString()}
+          renderItem={({ item }) => (
+            <View style={[styles.msgBubble, item.role === "user" ? styles.userMsg : styles.aiMsg]}>
+              <Text style={styles.msgText}>{item.text}</Text>
+            </View>
+          )}
+        />
+        <View style={styles.chatInputRow}>
+          <TextInput
+            style={styles.chatInput}
+            value={chatInput}
+            onChangeText={setChatInput}
+            placeholder="Ask me anything about your finances..."
+          />
+          <TouchableOpacity style={styles.chatSendBtn} onPress={sendChatMessage}>
+            <Text style={{ color: "#fff" }}>Send</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </ScrollView>
   );
 }
 
-export default Home;
-
-export const options = {
-  title: "Finance App",
-};
-
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    marginTop: 40,
-  },
-  heading: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 16,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    padding: 8,
-    marginBottom: 10,
-    borderRadius: 5,
-  },
-  balance: {
-    fontSize: 18,
-    marginVertical: 10,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  summaryBox: {
-    backgroundColor: "#f0f0f0",
-    padding: 10,
-    borderRadius: 5,
-    marginBottom: 20,
-  },
-  summaryTitle: {
-    fontWeight: "bold",
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  transactionRow: {
-    padding: 10,
-    borderBottomWidth: 1,
-    borderColor: "#ccc",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  deleteText: {
-    color: "red",
-    fontWeight: "bold",
-  },
+  container: { padding: 20, marginTop: 40 },
+  heading: { fontSize: 24, fontWeight: "bold", marginBottom: 16 },
+  form: { marginBottom: 20 },
+  input: { borderWidth: 1, borderColor: "#ccc", padding: 8, marginBottom: 10, borderRadius: 5 },
+  button: { backgroundColor: "#007bff", padding: 10, borderRadius: 5, alignItems: "center" },
+  buttonText: { color: "#fff", fontWeight: "bold" },
+  row: { flexDirection: "row", justifyContent: "space-around", marginBottom: 10 },
+  typeBtn: { padding: 10, borderWidth: 1, borderColor: "#ccc", borderRadius: 5 },
+  activeType: { backgroundColor: "#cce5ff" },
+  summary: { padding: 10, backgroundColor: "#f0f0f0", borderRadius: 5, marginBottom: 20 },
+  summaryText: { fontWeight: "bold", fontSize: 16 },
+  txRow: { flexDirection: "row", justifyContent: "space-between", padding: 10, borderBottomWidth: 1, borderColor: "#ccc" },
+  txDesc: { fontWeight: "bold" },
+  txMeta: { fontSize: 12, color: "#555" },
+  income: { color: "green", fontWeight: "bold" },
+  expense: { color: "red", fontWeight: "bold" },
+  delete: { color: "red", marginTop: 5, fontSize: 12 },
+
+  chatContainer: { marginTop: 20, padding: 10, backgroundColor: "#f9f9f9", borderRadius: 10, borderWidth: 1, borderColor: "#ddd" },
+  chatHeading: { fontSize: 18, fontWeight: "bold", marginBottom: 10 },
+  msgBubble: { padding: 10, borderRadius: 10, marginVertical: 4, maxWidth: "80%" },
+  userMsg: { backgroundColor: "#cce5ff", alignSelf: "flex-end" },
+  aiMsg: { backgroundColor: "#e6e6e6", alignSelf: "flex-start" },
+  msgText: { fontSize: 16 },
+  chatInputRow: { flexDirection: "row", marginTop: 10 },
+  chatInput: { flex: 1, borderWidth: 1, borderColor: "#ccc", borderRadius: 5, padding: 8, marginRight: 5 },
+  chatSendBtn: { backgroundColor: "#007bff", paddingHorizontal: 15, justifyContent: "center", borderRadius: 5 },
 });

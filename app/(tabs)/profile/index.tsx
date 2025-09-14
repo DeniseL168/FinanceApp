@@ -15,11 +15,11 @@ import { launchImageLibrary } from 'react-native-image-picker';
 
 export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
-  const [name, setName] = useState('Denise Lee');
-  const [email, setEmail] = useState('denise.debloxer@gmail.com');
-  const [phone, setPhone] = useState('(626) 866-1698');
-  const [address, setAddress] = useState('1313 Disneyland Dr Anaheim, CA, USA');
-  const [birthday, setBirthday] = useState('July 28, 2009');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [birthday, setBirthday] = useState('');
   const [profileImageUri, setProfileImageUri] = useState<string | null>(null);
 
   // Load user data from AsyncStorage on mount
@@ -44,7 +44,7 @@ export default function ProfilePage() {
     loadUserData();
   }, []);
 
-  // Image picker
+  // Image picker function
   const pickImage = () => {
     launchImageLibrary(
       {
@@ -66,7 +66,7 @@ export default function ProfilePage() {
     );
   };
 
-  // Save profile data when user clicks "Save"
+  // Save profile data to AsyncStorage
   const saveProfile = async () => {
     const userData = {
       name,
@@ -79,9 +79,21 @@ export default function ProfilePage() {
     try {
       await AsyncStorage.setItem('user_data', JSON.stringify(userData));
       Alert.alert('Success', 'Profile saved.');
+      setIsEditing(false);
     } catch (e) {
       console.error('Failed to save profile', e);
       Alert.alert('Error', 'Could not save profile.');
+    }
+  };
+
+  // Logout clears user session (you might want to clear more if needed)
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.removeItem('user_data');
+      await AsyncStorage.removeItem('auth_token');
+      router.replace('/'); // Redirect to login or home screen
+    } catch (error) {
+      console.error('Error during logout:', error);
     }
   };
 
@@ -109,70 +121,76 @@ export default function ProfilePage() {
       {isEditing ? (
         <TextInput style={styles.nameInput} value={name} onChangeText={setName} />
       ) : (
-        <Text style={styles.name}>{name}</Text>
+        <Text style={styles.name}>{name || 'No Name'}</Text>
       )}
 
       <View style={styles.infoContainer}>
         <View style={styles.infoRow}>
           <Text style={styles.label}>Email Address:</Text>
           {isEditing ? (
-            <TextInput style={styles.input} value={email} onChangeText={setEmail} />
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
           ) : (
-            <Text style={styles.value}>{email}</Text>
+            <Text style={styles.value}>{email || 'No Email'}</Text>
           )}
         </View>
+
         <View style={styles.infoRow}>
           <Text style={styles.label}>Phone Number:</Text>
           {isEditing ? (
-            <TextInput style={styles.input} value={phone} onChangeText={setPhone} />
+            <TextInput
+              style={styles.input}
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+            />
           ) : (
-            <Text style={styles.value}>{phone}</Text>
+            <Text style={styles.value}>{phone || 'No Phone'}</Text>
           )}
         </View>
+
         <View style={styles.infoRow}>
           <Text style={styles.label}>Address:</Text>
           {isEditing ? (
             <TextInput style={styles.input} value={address} onChangeText={setAddress} />
           ) : (
-            <Text style={styles.value}>{address}</Text>
+            <Text style={styles.value}>{address || 'No Address'}</Text>
           )}
         </View>
+
         <View style={styles.infoRow}>
           <Text style={styles.label}>Birthday:</Text>
           {isEditing ? (
-            <TextInput style={styles.input} value={birthday} onChangeText={setBirthday} />
+            <TextInput
+              style={styles.input}
+              value={birthday}
+              onChangeText={setBirthday}
+              placeholder="YYYY-MM-DD"
+            />
           ) : (
-            <Text style={styles.value}>{birthday}</Text>
+            <Text style={styles.value}>{birthday || 'No Birthday'}</Text>
           )}
         </View>
       </View>
 
       <TouchableOpacity
         style={styles.button}
-        onPress={async () => {
-          if (isEditing) {
-            await saveProfile();
-          }
-          setIsEditing((prev) => !prev);
-        }}
+        onPress={isEditing ? saveProfile : () => setIsEditing(true)}
       >
         <Text style={styles.buttonText}>{isEditing ? 'Save' : 'Edit Profile'}</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.button}>
-        <Text style={styles.buttonText}>Settings</Text>
-      </TouchableOpacity>
-
       <TouchableOpacity
-      style={styles.button}
-      onPress={async () => {
-        // Remove only session flag, keep user data
-        await AsyncStorage.removeItem('session_active');
-        router.replace('/');
-      }}
-    >
-      <Text style={styles.buttonText}>Logout</Text>
-    </TouchableOpacity>
+        style={[styles.button, { backgroundColor: '#f44336' }]}
+        onPress={handleLogout}
+      >
+        <Text style={[styles.buttonText, { color: '#fff' }]}>Logout</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -182,6 +200,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 30,
     backgroundColor: '#fff',
+    flexGrow: 1,
   },
   profileImage: {
     width: 140,
@@ -228,7 +247,7 @@ const styles = StyleSheet.create({
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginVertical: 5,
+    marginVertical: 8,
     alignItems: 'center',
   },
   label: {
@@ -250,13 +269,14 @@ const styles = StyleSheet.create({
   },
   button: {
     width: '90%',
-    padding: 12,
-    backgroundColor: '#f0f0f0',
+    padding: 14,
+    backgroundColor: '#4CAF50',
     borderRadius: 8,
     marginVertical: 6,
     alignItems: 'center',
   },
   buttonText: {
     fontSize: 16,
+    color: '#fff',
   },
 });

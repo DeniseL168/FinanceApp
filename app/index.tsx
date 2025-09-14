@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -8,11 +9,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Keychain from 'react-native-keychain';
+
+const API_URL = 'http://localhost:5000'; // Change if using a different backend host
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [errorMessage, setErrorMessage] = useState(''); // <-- New state for error message
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     const loadUserData = async () => {
@@ -30,30 +34,52 @@ export default function LoginPage() {
   }, []);
 
   const handleLogin = async () => {
-    setErrorMessage(''); // clear previous errors
+    setErrorMessage('');
     if (!email || !password) {
       setErrorMessage('Please enter both email and password.');
       return;
     }
 
     try {
-      const storedData = await AsyncStorage.getItem('user_data');
-      if (storedData) {
-        const userData = JSON.parse(storedData);
-        if (userData.email === email && userData.password === password) {
-          // Clear error and navigate
-          setErrorMessage('');
-          router.replace('/profile'); // Navigate to home
-        } else {
-          setErrorMessage('Incorrect email or password.');
-        }
-      } else {
-        setErrorMessage('No account found. Please create one.');
+      // Call backend API
+      const res = await axios.post(`${API_URL}/login`, {
+        email,
+        password
+      });
+
+      const token = res.data.token;
+      const user = res.data.user;
+
+      // Store token securely
+      try {
+        await Keychain.setGenericPassword('auth_token_key', token);
+        console.log('Token stored in Keychain');
+      } catch (keychainError) {
+        console.warn('Keychain failed, falling back to AsyncStorage:', keychainError);
+        await AsyncStorage.setItem('auth_token', token);
       }
-    } catch (e) {
-      console.error('Login error:', e);
-      setErrorMessage('Failed to log in. Please try again later.');
+
+      // Store user data
+      await AsyncStorage.setItem('user_data', JSON.stringify(user));
+
+      // Navigate to profile
+      router.replace('/profile');
+
+    } catch (error: unknown) {
+    if (axios.isAxiosError(error)) {
+      // error is AxiosError, safe to access response etc.
+      console.error('Login error:', error.response?.data || error.message);
+      setErrorMessage(error.response?.data?.message || 'Failed to log in. Please try again.');
+    } else if (error instanceof Error) {
+      // generic JS error
+      console.error('Login error:', error.message);
+      setErrorMessage('Failed to log in. Please try again.');
+    } else {
+      // unknown error type
+      console.error('Unexpected error:', error);
+      setErrorMessage('Failed to log in. Please try again.');
     }
+  }
   };
 
   return (
@@ -77,7 +103,6 @@ export default function LoginPage() {
         onChangeText={setPassword}
       />
 
-      {/* Show error message box if there is an error */}
       {!!errorMessage && (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{errorMessage}</Text>
@@ -90,7 +115,7 @@ export default function LoginPage() {
 
       <TouchableOpacity
         style={[styles.button, styles.secondaryButton]}
-        onPress={() => router.push('/create')} // Navigate to create.tsx
+        onPress={() => router.push('/create')}
       >
         <Text style={[styles.buttonText, styles.secondaryButtonText]}>
           Create an Account

@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
@@ -7,8 +8,10 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity
+  TouchableOpacity,
 } from 'react-native';
+
+const API_URL = 'http://localhost:5000'; // Change if backend is on another host
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
@@ -19,34 +22,54 @@ export default function RegisterPage() {
   const [birthday, setBirthday] = useState('');
 
   const handleRegister = async () => {
-    if (!name || !email || !password) {
-      Alert.alert('Error', 'Name, email, and password are required.');
+    if (!email || !password) {
+      Alert.alert('Error', 'Email and password are required.');
       return;
     }
 
-    const userData = { name, email, password, phone, address, birthday };
-
     try {
-      const jsonValue = JSON.stringify(userData);
-      await AsyncStorage.setItem('user_data', jsonValue);
+      // Call backend register route
+      const res = await axios.post(`${API_URL}/register`, {
+        email,
+        password,
+        name,
+        phone,
+        address,
+        birthday,
+      });
+
+      const user = res.data.user || {};
+
+      // Store the full data locally (using your form values to guarantee)
+      const userDataToStore = {
+        name,
+        email,
+        phone,
+        address,
+        birthday,
+        ...user, // merge any additional backend user info if available
+      };
+
+      await AsyncStorage.setItem('user_data', JSON.stringify(userDataToStore));
+
+      const token = res.data.access_token || res.data.token;
+      if (token) {
+        await AsyncStorage.setItem('auth_token', token);
+      }
+
       Alert.alert('Success', 'Account created!');
-      router.replace('/'); 
-    } catch (e) {
-      console.error('Error storing data:', e);
-      Alert.alert('Error', 'Failed to save user data.');
+      router.replace('/'); // navigate to login page or home
+
+    } catch (error: any) {
+      console.error('Register error:', error.response?.data || error.message);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to register. Please try again.');
     }
   };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Create Account</Text>
-
-      <TextInput
-        style={styles.input}
-        placeholder="Full Name"
-        value={name}
-        onChangeText={setName}
-      />
+      
       <TextInput
         style={styles.input}
         placeholder="Email Address"
@@ -61,25 +84,7 @@ export default function RegisterPage() {
         value={password}
         onChangeText={setPassword}
       />
-      <TextInput
-        style={styles.input}
-        placeholder="Phone Number"
-        keyboardType="phone-pad"
-        value={phone}
-        onChangeText={setPhone}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Address"
-        value={address}
-        onChangeText={setAddress}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Birthday (e.g., 2005-12-31)"
-        value={birthday}
-        onChangeText={setBirthday}
-      />
+
 
       <TouchableOpacity style={styles.button} onPress={handleRegister}>
         <Text style={styles.buttonText}>Create Account</Text>
